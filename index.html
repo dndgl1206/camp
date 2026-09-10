@@ -3,84 +3,143 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
 <title>캡차 입력</title>
 <style>
   * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   body {
-    margin: 0; padding: 20px;
+    margin: 0; padding: 18px 18px 40px;
     font: 20px/1.5 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif;
     background: #0f172a; color: #e2e8f0;
-    display: flex; flex-direction: column; gap: 16px; align-items: center;
+    display: flex; flex-direction: column; gap: 14px; align-items: center;
   }
   h1 { font-size: 22px; margin: 0; text-align: center; }
-  #sub { font-size: 16px; color: #94a3b8; margin: -8px 0 0; text-align: center; }
+  #sub { font-size: 17px; color: #94a3b8; margin: -6px 0 0; text-align: center; }
   #img {
     width: 100%; max-width: 520px; border-radius: 12px;
-    background: #fff; display: block; min-height: 90px;
+    background: #fff; display: block; min-height: 100px;
   }
   #ans {
-    width: 100%; max-width: 520px; font-size: 40px; text-align: center;
+    width: 100%; max-width: 520px; font-size: 42px; text-align: center;
     padding: 14px; border-radius: 12px; border: 3px solid #38bdf8;
-    background: #fff; color: #000; letter-spacing: 6px;
+    background: #fff; color: #000; letter-spacing: 8px;
   }
   .row { display: flex; gap: 10px; width: 100%; max-width: 520px; }
   button {
     flex: 1; font-size: 24px; font-weight: 700; padding: 18px 10px;
     border: 0; border-radius: 12px; color: #fff; background: #2563eb;
   }
-  button.sub { background: #475569; font-size: 18px; font-weight: 500; }
-  button:active { opacity: .7; }
-  #msg { font-size: 18px; min-height: 28px; text-align: center; }
-  .ok { color: #4ade80; } .err { color: #f87171; }
+  button.sub { background: #475569; font-size: 17px; font-weight: 500; padding: 14px 8px; }
+  button:active { opacity: .6; }
+  #msg { font-size: 18px; min-height: 26px; text-align: center; }
+  .ok { color: #4ade80; } .err { color: #f87171; } .dim { color: #94a3b8; }
 </style>
 </head>
 <body>
 
 <h1>🏕️ 캡차 입력</h1>
-<p id="sub">그림의 숫자를 입력하고 전송하세요</p>
+<p id="sub">최신 캡차를 불러오는 중…</p>
 
 <img id="img" alt="캡차 이미지">
 
 <input id="ans" type="text" inputmode="numeric" autocomplete="off"
        autocapitalize="off" autocorrect="off" placeholder="숫자">
 
+<div class="row"><button id="send">전송</button></div>
 <div class="row">
-  <button id="send">전송</button>
+  <button class="sub" id="reload">🔄 화면 갱신</button>
+  <button class="sub" id="recap">그림 다시받기</button>
 </div>
 <div class="row">
-  <button class="sub" id="recap">새 이미지</button>
   <button class="sub" id="skip">이 자리 포기</button>
+  <button class="sub" id="status">상태 확인</button>
 </div>
 
 <div id="msg"></div>
 
 <script>
 (function () {
+  // ───── 설정: 토픽을 여기 박아두면 주소만 열어도 동작 ─────
+  var TOPIC_DEFAULT = 'camp-woong-123';
+
   var q     = new URLSearchParams(location.search);
-  var topic = q.get('topic') || '';
-  var img   = q.get('img')   || '';
+  var topic = q.get('topic') || TOPIC_DEFAULT;
   var slot  = q.get('slot')  || '';
+  var img   = q.get('img')   || '';
 
   var $img = document.getElementById('img');
   var $ans = document.getElementById('ans');
   var $msg = document.getElementById('msg');
   var $sub = document.getElementById('sub');
-
-  if (slot) $sub.textContent = slot + ' — 그림의 숫자를 입력하세요';
-  if (img)  $img.src = img;
-  else      $msg.textContent = '이미지 주소가 없습니다.';
+  var base = 'https://ntfy.sh/' + encodeURIComponent(topic);
 
   function say(t, cls) { $msg.textContent = t; $msg.className = cls || ''; }
 
   function send(text, done) {
-    if (!topic) { say('토픽이 지정되지 않았습니다.', 'err'); return; }
-    say('전송 중…');
-    fetch('https://ntfy.sh/' + encodeURIComponent(topic), {
-      method: 'POST', body: text
-    }).then(function (r) {
-      if (r.ok) { say('✅ 전송됨: ' + text, 'ok'); if (done) done(); }
-      else say('❌ 전송 실패 (' + r.status + ')', 'err');
-    }).catch(function () { say('❌ 네트워크 오류', 'err'); });
+    say('전송 중…', 'dim');
+    fetch(base, { method: 'POST', body: text })
+      .then(function (r) {
+        if (r.ok) { say('✅ 보냄: ' + text, 'ok'); if (done) done(); }
+        else if (r.status === 429) say('❌ ntfy 요청 한도 — 잠시 후 다시', 'err');
+        else say('❌ 전송 실패 (' + r.status + ')', 'err');
+      })
+      .catch(function () { say('❌ 네트워크 오류', 'err'); });
+  }
+
+  // 최근 메시지에서 가장 최신 캡차 이미지와 자리번호를 찾아온다
+  function loadLatest(quiet) {
+    if (!quiet) say('불러오는 중…', 'dim');
+    fetch(base + '/json?poll=1&since=15m')
+      .then(function (r) {
+        if (!r.ok) throw new Error(r.status);
+        return r.text();
+      })
+      .then(function (t) {
+        var lines = t.split('\n').filter(function (x) { return x.trim(); });
+        var found = null, foundTime = 0, foundSlot = '', foundDate = '';
+        for (var i = 0; i < lines.length; i++) {
+          var m;
+          try { m = JSON.parse(lines[i]); } catch (e) { continue; }
+          if (m.attachment && m.attachment.url &&
+              /captcha/i.test(m.attachment.name || '') && m.time >= foundTime) {
+            found = m.attachment.url; foundTime = m.time;
+            // 스크립트가 실어보낸 'CAP|2026.09.29|1야영장 103번' 파싱
+            var info = (m.message || '').split('|');
+            if (info[0] === 'CAP') { foundDate = info[1] || ''; foundSlot = info[2] || ''; }
+          }
+        }
+        // 옛 형식(정보 없음) 대비: '잡음' 알림 제목에서 보조 추출
+        if (found && !foundSlot) {
+          for (var k = 0; k < lines.length; k++) {
+            var n;
+            try { n = JSON.parse(lines[k]); } catch (e) { continue; }
+            if (n.title && /잡음/.test(n.title) && Math.abs((n.time || 0) - foundTime) <= 10) {
+              var sm = n.title.match(/([0-9]+야영장\s*[0-9\-]+번)/);
+              if (sm) foundSlot = sm[1];
+              var dm = n.title.match(/\((20[0-9]{2}\.[0-9]{2}\.[0-9]{2})\)/);
+              if (dm) foundDate = dm[1];
+            }
+          }
+        }
+        if (found) {
+          $img.src = found + '?t=' + Date.now();
+          slot = foundSlot || slot;
+          var ago = Math.max(0, Math.round(Date.now() / 1000 - foundTime));
+          var agoTxt = ago < 60 ? ago + '초 전' : Math.round(ago / 60) + '분 전';
+          $sub.textContent = (foundDate ? '📅 ' + foundDate + '\n' : '') +
+                             (slot ? slot + ' · ' : '') + agoTxt + ' 캡차';
+          $sub.style.whiteSpace = 'pre-line';
+          $sub.style.fontSize = '19px';
+          $sub.style.color = '#fbbf24';
+          $ans.value = '';
+          if (!quiet) say('불러왔습니다.', 'ok');
+          setTimeout(function () { $ans.focus(); }, 200);
+        } else {
+          $sub.textContent = '최근 15분 내 캡차가 없습니다';
+          say('대기 중 — PC가 자리를 잡으면 알림이 옵니다.', 'dim');
+        }
+      })
+      .catch(function (e) { say('❌ 불러오기 실패 (' + e.message + ')', 'err'); });
   }
 
   document.getElementById('send').onclick = function () {
@@ -88,33 +147,38 @@
     if (!v) { say('숫자를 입력하세요.', 'err'); return; }
     send('!c ' + v);
   };
+  document.getElementById('reload').onclick = function () { loadLatest(false); };
   document.getElementById('recap').onclick = function () {
-    send('!recap', function () {
-      // 새 이미지가 올라올 시간을 준 뒤, 최근 메시지에서 최신 캡차 주소를 찾아 교체
-      setTimeout(function () {
-        fetch('https://ntfy.sh/' + encodeURIComponent(topic) + '/json?poll=1&since=1m')
-          .then(function (r) { return r.text(); })
-          .then(function (t) {
-            var urls = t.match(/https:\/\/ntfy\.sh\/file\/[A-Za-z0-9]+\.png/g);
-            if (urls && urls.length) {
-              $img.src = urls[urls.length - 1];
-              $ans.value = '';
-              say('새 이미지를 불러왔습니다.', 'ok');
-            } else say('새 이미지를 찾지 못했습니다.', 'err');
-          });
-      }, 2500);
-    });
+    send('!recap', function () { setTimeout(function () { loadLatest(true); }, 3000); });
   };
   document.getElementById('skip').onclick = function () {
-    if (!slot) { say('자리번호 정보가 없습니다.', 'err'); return; }
-    var num = slot.replace(/[^0-9\-]/g, '');
+    var num = (slot || '').replace(/^[0-9]+야영장\s*/, '').replace(/[^0-9\-]/g, '');
+    if (!num) { say('자리번호를 알 수 없습니다.', 'err'); return; }
     send('!skip ' + num);
   };
+  document.getElementById('status').onclick = function () { send('!status'); };
 
   $ans.addEventListener('keydown', function (e) {
     if (e.key === 'Enter') document.getElementById('send').click();
   });
-  setTimeout(function () { $ans.focus(); }, 300);
+
+  // 알림으로 들어왔으면 그 이미지를, 그냥 열었으면 최신을 찾아온다
+  if (img) {
+    $img.src = img;
+    var d0 = q.get('date') || '';
+    $sub.textContent = (d0 ? '📅 ' + d0 + '\n' : '') +
+                       (slot ? slot + ' — 그림의 숫자를 입력하세요' : '그림의 숫자를 입력하세요');
+    $sub.style.whiteSpace = 'pre-line';
+    $sub.style.color = '#fbbf24';
+    setTimeout(function () { $ans.focus(); }, 300);
+  } else {
+    loadLatest(true);
+  }
+
+  // 앱 전환 후 화면으로 돌아왔을 때 자동으로 최신 확인
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden && !q.get('img')) loadLatest(true);
+  });
 })();
 </script>
 </body>
