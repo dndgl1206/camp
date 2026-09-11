@@ -33,6 +33,15 @@
   button:active { opacity: .6; }
   #msg { font-size: 18px; min-height: 26px; text-align: center; }
   .ok { color: #4ade80; } .err { color: #f87171; } .dim { color: #94a3b8; }
+  #skips { width: 100%; max-width: 520px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .chip {
+    background: #7f1d1d; color: #fee2e2; border-radius: 999px;
+    padding: 10px 14px; font-size: 17px; display: flex; align-items: center; gap: 8px;
+  }
+  .chip b { font-weight: 700; }
+  .chip span { background: #ef4444; color: #fff; border-radius: 999px;
+               width: 26px; height: 26px; display: inline-flex;
+               align-items: center; justify-content: center; font-size: 16px; }
 </style>
 </head>
 <body>
@@ -54,8 +63,16 @@
   <button class="sub" id="skip">이 자리 포기</button>
   <button class="sub" id="status">상태 확인</button>
 </div>
+<div class="row">
+  <button class="sub" id="mstop">⏹ 감시 중지</button>
+  <button class="sub" id="mstart">▶ 감시 시작</button>
+</div>
+<div class="row">
+  <button class="sub" id="skiplist">📋 제외 목록 보기</button>
+</div>
 
 <div id="msg"></div>
+<div id="skips"></div>
 
 <script>
 (function () {
@@ -156,7 +173,65 @@
     if (!num) { say('자리번호를 알 수 없습니다.', 'err'); return; }
     send('!skip ' + num);
   };
-  document.getElementById('status').onclick = function () { send('!status'); };
+  document.getElementById('status').onclick = function () { askStatus(true); };
+  document.getElementById('mstop').onclick  = function () { send('!stop'); };
+  document.getElementById('mstart').onclick = function () { send('!start'); };
+  document.getElementById('skiplist').onclick = function () { askStatus(false); };
+
+  // PC에 !status 를 보내고, 돌아온 응답에서 임시제외 목록을 뽑아 보여준다
+  function askStatus(showAll) {
+    var sentAt = Math.floor(Date.now() / 1000);
+    say('PC에 상태 요청 중…', 'dim');
+    fetch(base, { method: 'POST', body: '!status' })
+      .then(function (r) { if (!r.ok) throw new Error(r.status); })
+      .then(function () { setTimeout(function () { readStatus(sentAt, showAll, 0); }, 3000); })
+      .catch(function (e) { say('❌ 요청 실패 (' + e.message + ')', 'err'); });
+  }
+
+  function readStatus(sentAt, showAll, tries) {
+    fetch(base + '/json?poll=1&since=2m')
+      .then(function (r) { return r.text(); })
+      .then(function (t) {
+        var lines = t.split('\n').filter(function (x) { return x.trim(); });
+        var latest = null;
+        for (var i = 0; i < lines.length; i++) {
+          var m; try { m = JSON.parse(lines[i]); } catch (e) { continue; }
+          if (m.title && /상태/.test(m.title) && (m.time || 0) >= sentAt) latest = m;
+        }
+        if (!latest) {
+          if (tries < 6) { setTimeout(function () { readStatus(sentAt, showAll, tries + 1); }, 4000); return; }
+          say('❌ PC 응답 없음 — 원격명령이 꺼졌거나 PC가 멈췄습니다.', 'err');
+          return;
+        }
+        if (showAll) say(latest.message, 'ok');
+        else say('제외 목록을 불러왔습니다.', 'ok');
+        renderSkips(latest.message || '');
+      })
+      .catch(function () { say('❌ 응답 읽기 실패', 'err'); });
+  }
+
+  // '임시제외: 1-129(46분) 999(49분)' → 해제 버튼으로 렌더
+  function renderSkips(msg) {
+    var box = document.getElementById('skips');
+    box.innerHTML = '';
+    var line = (msg.split('\n').filter(function (x) { return /임시제외/.test(x); })[0] || '');
+    var body = line.replace(/^.*임시제외:\s*/, '').trim();
+    if (!body || body === '없음') {
+      box.innerHTML = '<div class="dim" style="font-size:17px">임시제외 없음</div>';
+      return;
+    }
+    body.split(/\s+/).forEach(function (tok) {
+      var num = tok.replace(/\(.*$/, '').replace(/^[0-9]+-/, '');
+      if (!num) return;
+      var el = document.createElement('div');
+      el.className = 'chip';
+      el.innerHTML = '<b>' + tok + '</b><span>✕</span>';
+      el.querySelector('span').onclick = function () {
+        send('!unskip ' + num, function () { el.remove(); });
+      };
+      box.appendChild(el);
+    });
+  }
 
   $ans.addEventListener('keydown', function (e) {
     if (e.key === 'Enter') document.getElementById('send').click();
