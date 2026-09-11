@@ -33,7 +33,9 @@
   button:active { opacity: .6; }
   #msg { font-size: 18px; min-height: 26px; text-align: center; }
   .ok { color: #4ade80; } .err { color: #f87171; } .dim { color: #94a3b8; }
-  #skips { width: 100%; max-width: 520px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  #skips, #dates { width: 100%; max-width: 520px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+  .chip.date { background: #1e3a8a; color: #dbeafe; }
+  .chip.date span { background: #3b82f6; }
   .chip {
     background: #7f1d1d; color: #fee2e2; border-radius: 999px;
     padding: 10px 14px; font-size: 17px; display: flex; align-items: center; gap: 8px;
@@ -68,10 +70,11 @@
   <button class="sub" id="mstart">▶ 감시 시작</button>
 </div>
 <div class="row">
-  <button class="sub" id="skiplist">📋 제외 목록 보기</button>
+  <button class="sub" id="skiplist">📋 감시날짜 · 제외목록 보기</button>
 </div>
 
 <div id="msg"></div>
+<div id="dates"></div>
 <div id="skips"></div>
 
 <script>
@@ -205,9 +208,37 @@
         }
         if (showAll) say(latest.message, 'ok');
         else say('제외 목록을 불러왔습니다.', 'ok');
+        renderDates(latest.message || '');
         renderSkips(latest.message || '');
       })
       .catch(function () { say('❌ 응답 읽기 실패', 'err'); });
+  }
+
+  // '날짜: 2026.09.13 / 2026.09.26' → 칩으로 렌더, ✕ 로 해당 날짜 감시 해제
+  var curDates = [];
+  function renderDates(msg) {
+    var box = document.getElementById('dates');
+    box.innerHTML = '';
+    var line = (msg.split('\n').filter(function (x) { return /^날짜:/.test(x.trim()); })[0] || '');
+    var body = line.replace(/^.*날짜:\s*/, '').trim();
+    if (!body) { box.innerHTML = '<div class="dim" style="font-size:17px">감시 날짜 정보 없음</div>'; return; }
+
+    curDates = body.split('/').map(function (x) { return x.trim().replace(/[^0-9]/g, ''); })
+                   .filter(function (x) { return x.length === 8; });
+    curDates.forEach(function (d) {
+      var el = document.createElement('div');
+      el.className = 'chip date';
+      el.innerHTML = '<b>' + d.slice(4, 6) + '/' + d.slice(6) + '</b><span>✕</span>';
+      el.querySelector('span').onclick = function () {
+        if (curDates.length <= 1) { say('마지막 날짜는 뺄 수 없습니다. 멈추려면 [⏹ 감시 중지].', 'err'); return; }
+        var rest = curDates.filter(function (x) { return x !== d; });
+        send('!date ' + rest.join(','), function () {
+          curDates = rest;
+          el.remove();
+        });
+      };
+      box.appendChild(el);
+    });
   }
 
   // '임시제외: 1-129(46분) 999(49분)' → 해제 버튼으로 렌더
